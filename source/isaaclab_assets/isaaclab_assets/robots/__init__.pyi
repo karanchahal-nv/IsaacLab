@@ -106,4 +106,4 @@ from .universal_robots import (
     UR10e_ROBOTIQ_GRIPPER_CFG,
     UR10e_ROBOTIQ_2F_85_CFG,
 )
-from .flexiv_rizon import FLEXIV_RIZON4S_CFG, FLEXIV_RIZON4S_GRAV_GRIPPER_CFG
+from .flexiv import FLEXIV_RIZON4S_CFG, FLEXIV_RIZON4S_GRAV_GRIPPER_CFG
