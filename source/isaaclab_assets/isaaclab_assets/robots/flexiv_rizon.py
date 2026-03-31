@@ -14,12 +14,10 @@ The following configurations are available:
 Reference: https://www.flexiv.com/product/rizon
 """
 
-import math
-
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import IdealPDActuatorCfg, ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
+from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
 
 ##
 # Configuration
@@ -47,7 +45,7 @@ FLEXIV_RIZON4S_CFG = ArticulationCfg(
             "joint4": -0.4166,
             "joint5": 0.6128,
             "joint6": 4.3228,
-            "joint7": -0.5606
+            "joint7": -0.5606,
         },
         pos=(0.0, 0.0, 0.0),
         rot=(1.0, 0.0, 0.0, 0.0),
