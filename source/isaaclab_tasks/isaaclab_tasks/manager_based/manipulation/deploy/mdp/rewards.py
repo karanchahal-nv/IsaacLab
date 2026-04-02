@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 import torch
@@ -533,9 +534,7 @@ class keypoint_ee_gear_error(ManagerTermBase):
         env.extras["log"]["ee_gear_kp_error/weight_scale"] = weight_scale
 
         self._step_count += 1
-        import carb
-
-        carb.log_info(
+        logging.getLogger(__name__).info(
             f"[ee_gear_kp_error] step={self._step_count}"
             f" | mean_kp_error={mean_error_scalar:.5f}"
             f" | pct_close={pct_close:.3f}"
@@ -697,9 +696,7 @@ class keypoint_ee_gear_error_exp(ManagerTermBase):
         env.extras["log"]["ee_gear_kp_error_exp/weight_scale"] = weight_scale
 
         self._step_count += 1
-        import carb
-
-        carb.log_info(
+        logging.getLogger(__name__).info(
             f"[ee_gear_kp_error_exp] step={self._step_count}"
             f" | mean_kp_error={mean_error_scalar:.5f}"
             f" | pct_close={pct_close:.3f}"

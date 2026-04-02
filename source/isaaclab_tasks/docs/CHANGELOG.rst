@@ -1,6 +1,27 @@
 Changelog
 ---------
 
+1.5.18 (2026-04-01)
+~~~~~~~~~~~~~~~~~~~
+
+Changed
+^^^^^^^
+
+* Changed gear base in gear assembly environment to use ``disable_gravity=True``
+  alongside ``kinematic_enabled=True`` for robust kinematic behavior across
+  physics backends.  Newton's ``RigidObject`` does not fully support kinematic
+  bodies at runtime; disabling gravity prevents the gear base from falling under
+  simulation.
+
+1.5.17 (2026-03-31)
+~~~~~~~~~~~~~~~~~~~
+
+Changed
+^^^^^^^
+
+* Changed the default physics backend for the gear assembly task from PhysX to Newton.
+  Newton is now used by default; pass ``presets=physx`` on the CLI to revert to PhysX.
+
 1.5.16 (2026-03-24)
 ~~~~~~~~~~~~~~~~~~~
 

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 import random
 from typing import TYPE_CHECKING
 
@@ -324,12 +325,21 @@ class set_robot_to_grasp_pose(ManagerTermBase):
             pos_error_norm = torch.linalg.norm(pos_error, dim=-1)
             rot_error_norm = torch.linalg.norm(axis_angle_error, dim=-1)
 
+            if i % 10 == 0 or i == max_iterations - 1:
+                logging.getLogger(__name__).debug(
+                    f"[IK iter {i}] pos_err={pos_error_norm.max().item():.6f}"
+                    f"  rot_err={rot_error_norm.max().item():.6f}"
+                )
+
             if torch.all(pos_error_norm < pos_threshold) and torch.all(rot_error_norm < rot_threshold):
+                logging.getLogger(__name__).info(
+                    f"[IK] Converged at iter {i}: pos_err={pos_error_norm.max().item():.6f}"
+                    f"  rot_err={rot_error_norm.max().item():.6f}"
+                )
                 break
 
             # Solve IK using jacobian
-            jacobians = wp.to_torch(self.robot_asset.root_view.get_jacobians()).clone()
-            jacobian = jacobians[env_ids, self.jacobi_body_idx, :, :]
+            jacobian = self._get_ee_jacobian(env_ids)
 
             delta_dof_pos = fc._get_delta_dof_pos(
                 delta_pose=delta_hand_pose,
@@ -364,6 +374,13 @@ class set_robot_to_grasp_pose(ManagerTermBase):
             self.robot_asset.write_joint_position_to_sim_index(position=joint_pos, env_ids=env_ids)
             self.robot_asset.write_joint_velocity_to_sim_index(velocity=joint_vel, env_ids=env_ids)
 
+        else:
+            logging.getLogger(__name__).warning(
+                f"[IK] Did NOT converge after {max_iterations} iters:"
+                f" pos_err={pos_error_norm.max().item():.6f}"
+                f" rot_err={rot_error_norm.max().item():.6f}"
+            )
+
         # Reset joint velocities to zero after IK convergence
         joint_vel = torch.zeros_like(wp.to_torch(self.robot_asset.data.joint_vel)[env_ids])
 
@@ -388,6 +405,46 @@ class set_robot_to_grasp_pose(ManagerTermBase):
             self.gripper_joint_setter_func(joint_pos, [row_idx], self.finger_joints, hand_close_width)
 
         self.robot_asset.set_joint_position_target_index(target=joint_pos, joint_ids=self.all_joints, env_ids=env_ids)
+
+    def _get_ee_jacobian(self, env_ids: torch.Tensor) -> torch.Tensor:
+        """Get the end-effector Jacobian for the given environment IDs.
+
+        Supports both PhysX (``get_jacobians``) and Newton (``eval_jacobian``)
+        backends transparently.
+
+        Returns:
+            Jacobian tensor of shape ``(len(env_ids), 6, num_dofs)``.
+        """
+        root_view = self.robot_asset.root_view
+        if hasattr(root_view, "get_jacobians"):
+            # PhysX: shape (num_envs, num_bodies-1, 6, num_dofs)
+            jacobians = wp.to_torch(root_view.get_jacobians()).clone()
+            return jacobians[env_ids, self.jacobi_body_idx, :, :]
+
+        # Newton: eval_jacobian returns warp array of shape
+        # (model.articulation_count, max_joints * 6, max_dofs)
+        # where max_joints excludes the root body (same convention as PhysX).
+        from isaaclab_newton.physics import NewtonManager
+
+        state = NewtonManager.get_state_0()
+        J_wp = root_view.eval_jacobian(state)
+        J = wp.to_torch(J_wp)
+
+        model = NewtonManager.get_model()
+        max_links = model.max_joints_per_articulation
+        max_dofs = model.max_dofs_per_articulation
+
+        # Reshape flat (max_links*6) → (max_links, 6)
+        J = J[:, : max_links * 6, :max_dofs].reshape(-1, max_links, 6, max_dofs)
+
+        # Map view env indices → model-level articulation indices.
+        # articulation_ids may be 2D (worlds, artis_per_world); flatten to 1D.
+        arti_ids = wp.to_torch(root_view.articulation_ids).long().reshape(-1)
+        J_view = J[arti_ids]  # (view_env_count, max_links, 6, max_dofs)
+
+        # jacobi_body_idx uses the same root-excluded convention as PhysX
+        num_dofs = root_view.joint_dof_count
+        return J_view[env_ids, self.jacobi_body_idx, :, :num_dofs]
 
 
 class randomize_gears_and_base_pose(ManagerTermBase):

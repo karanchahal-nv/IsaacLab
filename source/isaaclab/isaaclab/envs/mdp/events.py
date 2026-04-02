@@ -204,21 +204,25 @@ class randomize_rigid_body_material(ManagerTermBase):
             )
 
         # obtain number of shapes per body (needed for indexing the material properties correctly)
-        # note: this is a workaround since the Articulation does not provide a direct way to obtain the number of shapes
-        #  per body. We use the physics simulation view to obtain the number of shapes per body.
         if isinstance(self.asset, BaseArticulation) and self.asset_cfg.body_ids != slice(None):
-            self.num_shapes_per_body = []
-            for link_path in self.asset.root_view.link_paths[0]:
-                link_physx_view = self.asset._physics_sim_view.create_rigid_body_view(link_path)  # type: ignore
-                self.num_shapes_per_body.append(link_physx_view.max_shapes)
-            # ensure the parsing is correct
-            num_shapes = sum(self.num_shapes_per_body)
-            expected_shapes = self.asset.root_view.max_shapes
-            if num_shapes != expected_shapes:
-                raise ValueError(
-                    "Randomization term 'randomize_rigid_body_material' failed to parse the number of shapes per body."
-                    f" Expected total shapes: {expected_shapes}, but got: {num_shapes}."
-                )
+            if hasattr(self.asset, "num_shapes_per_body"):
+                # Some backends (e.g. Newton) expose num_shapes_per_body directly on the
+                # articulation, avoiding the need to query via the physics simulation view.
+                self.num_shapes_per_body = self.asset.num_shapes_per_body
+            else:
+                # PhysX path: query via the physics simulation view using link USD paths.
+                self.num_shapes_per_body = []
+                for link_path in self.asset.root_view.link_paths[0]:
+                    link_physx_view = self.asset._physics_sim_view.create_rigid_body_view(link_path)  # type: ignore
+                    self.num_shapes_per_body.append(link_physx_view.max_shapes)
+                # ensure the parsing is correct
+                num_shapes = sum(self.num_shapes_per_body)
+                expected_shapes = self.asset.root_view.max_shapes
+                if num_shapes != expected_shapes:
+                    raise ValueError(
+                        "Randomization term 'randomize_rigid_body_material' failed to parse the number of shapes per"
+                        f" body. Expected total shapes: {expected_shapes}, but got: {num_shapes}."
+                    )
         else:
             # in this case, we don't need to do special indexing
             self.num_shapes_per_body = None
@@ -252,6 +256,24 @@ class randomize_rigid_body_material(ManagerTermBase):
         asset_cfg: SceneEntityCfg,
         make_consistent: bool = False,
     ):
+        # Check whether the backend supports the PhysX-style material property API.
+        has_physx_materials = hasattr(self.asset.root_view, "get_material_properties")
+        has_newton_attributes = hasattr(self.asset.root_view, "set_attribute")
+
+        if not has_physx_materials and not has_newton_attributes:
+            if not getattr(self, "_material_warning_emitted", False):
+                logging.getLogger(__name__).warning(
+                    f"Randomization term 'randomize_rigid_body_material' is not supported by the current"
+                    f" backend for asset '{self.asset_cfg.name}' (root_view has neither"
+                    " 'get_material_properties' nor 'set_attribute'). Skipping."
+                )
+                self._material_warning_emitted = True
+            return
+
+        if not has_physx_materials and has_newton_attributes:
+            self._apply_newton_material(num_buckets)
+            return
+
         # resolve environment ids
         if env_ids is None:
             env_ids = torch.arange(env.scene.num_envs, device="cpu", dtype=torch.int32)
@@ -259,7 +281,20 @@ class randomize_rigid_body_material(ManagerTermBase):
             env_ids = env_ids.cpu()
 
         # randomly assign material IDs to the geometries
-        total_num_shapes = self.asset.root_view.max_shapes
+        # PhysX exposes max_shapes; Newton exposes body_shapes (per-body counts) instead.
+        if hasattr(self.asset.root_view, "max_shapes"):
+            total_num_shapes = self.asset.root_view.max_shapes
+        elif hasattr(self.asset.root_view, "body_shapes"):
+            import numpy as np
+
+            total_num_shapes = int(np.asarray(self.asset.root_view.body_shapes).sum())
+        elif self.num_shapes_per_body is not None:
+            total_num_shapes = sum(self.num_shapes_per_body)
+        else:
+            raise AttributeError(
+                "Randomization term 'randomize_rigid_body_material' could not determine total number of shapes:"
+                " 'root_view' has neither 'max_shapes' nor 'body_shapes', and 'num_shapes_per_body' is not set."
+            )
         bucket_ids = torch.randint(0, num_buckets, (len(env_ids), total_num_shapes), device="cpu")
         material_samples = self.material_buckets[bucket_ids]
 
@@ -284,6 +319,61 @@ class randomize_rigid_body_material(ManagerTermBase):
         self.asset.root_view.set_material_properties(
             wp.from_torch(materials, dtype=wp.float32), wp.from_torch(env_ids, dtype=wp.int32)
         )
+
+    def _apply_newton_material(self, num_buckets: int):
+        """Set material properties via Newton's generic attribute API.
+
+        Newton's :class:`ArticulationView` does not expose PhysX-style
+        ``get/set_material_properties`` but provides a generic
+        ``get_attribute``/``set_attribute`` interface that can read/write
+        ``shape_material_mu`` (slide friction) and ``shape_material_restitution``
+        directly on the :class:`newton.Model`.
+
+        Newton/MuJoCo uses a single friction coefficient (``mu``) that
+        corresponds to the *dynamic* friction column of the material bucket
+        (index 1).  The *static* friction column (index 0) has no separate
+        equivalent in MuJoCo and is ignored here.
+        """
+        try:
+            from isaaclab_newton.physics import NewtonManager
+
+            model = NewtonManager.get_model()
+        except ImportError:
+            if not getattr(self, "_material_warning_emitted", False):
+                logging.getLogger(__name__).warning(
+                    "randomize_rigid_body_material: NewtonManager not available. Skipping."
+                )
+                self._material_warning_emitted = True
+            return
+
+        root_view = self.asset.root_view
+
+        # Read current friction values from the model via the view.
+        mu_arr = root_view.get_attribute("shape_material_mu", model)
+        mu = wp.to_torch(mu_arr).clone()
+        rest_arr = root_view.get_attribute("shape_material_restitution", model)
+        rest = wp.to_torch(rest_arr).clone()
+
+        # Build material samples for all shapes (same bucketing scheme as PhysX path).
+        num_shapes = mu.shape[-1]
+        bucket_ids = torch.randint(0, num_buckets, (num_shapes,), device="cpu")
+        dyn_friction = self.material_buckets[bucket_ids, 1]
+        restitution = self.material_buckets[bucket_ids, 2]
+
+        # Broadcast across worlds and articulations.
+        mu[..., :] = dyn_friction.to(mu.device)
+        rest[..., :] = restitution.to(rest.device)
+
+        root_view.set_attribute("shape_material_mu", model, wp.from_torch(mu, dtype=wp.float32))
+        root_view.set_attribute("shape_material_restitution", model, wp.from_torch(rest, dtype=wp.float32))
+
+        if not getattr(self, "_material_newton_applied", False):
+            logging.getLogger(__name__).info(
+                f"randomize_rigid_body_material: set Newton shape_material_mu for"
+                f" asset '{self.asset_cfg.name}' via set_attribute API"
+                f" (mu={dyn_friction[0].item():.3f}, restitution={restitution[0].item():.3f})."
+            )
+            self._material_newton_applied = True
 
 
 class randomize_rigid_body_mass(ManagerTermBase):

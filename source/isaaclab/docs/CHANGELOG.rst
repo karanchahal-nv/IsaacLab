@@ -1,6 +1,57 @@
 Changelog
 ---------
 
+4.5.26 (2026-04-01)
+~~~~~~~~~~~~~~~~~~~
+
+Fixed
+^^^^^
+
+* Fixed ``randomize_rigid_body_material`` to set friction and restitution on the
+  Newton backend via ``ArticulationView.set_attribute("shape_material_mu", ...)``
+  instead of silently skipping the operation.  The term previously emitted a
+  one-time warning and returned early when
+  ``root_view.get_material_properties()`` was unavailable.  It now detects the
+  Newton generic attribute API (``set_attribute``) and uses it to write
+  ``shape_material_mu`` and ``shape_material_restitution`` on the
+  :class:`newton.Model`, so physics-material randomisation events are no longer
+  skipped on Newton.
+
+4.5.25 (2026-03-31)
+~~~~~~~~~~~~~~~~~~~
+
+Fixed
+^^^^^
+
+* Fixed :meth:`~isaaclab.actuators.ActuatorBase._parse_joint_parameter` raising
+  ``ValueError`` when a backend (e.g. Newton) supplies USD-template joint
+  parameters with shape ``[1, num_joints]`` instead of
+  ``[num_envs, num_joints]``.  The single-row tensor is now broadcast to all
+  environments via ``expand`` so training with Newton and multiple environments
+  works correctly.
+
+* Fixed ``randomize_rigid_body_material`` event term raising
+  ``AttributeError: 'ArticulationView' object has no attribute 'link_paths'``
+  when used with the Newton backend.  Backends that expose
+  ``num_shapes_per_body`` directly on the articulation (e.g. Newton) now use
+  that property instead of the PhysX-specific ``root_view.link_paths`` /
+  ``_physics_sim_view`` query path.
+
+* Fixed ``randomize_rigid_body_material`` event term raising
+  ``AttributeError: 'ArticulationView' object has no attribute 'max_shapes'``
+  in its ``__call__`` method when used with the Newton backend.  The total
+  shape count is now derived from ``root_view.body_shapes`` (Newton) when
+  ``root_view.max_shapes`` (PhysX) is unavailable.  ``body_shapes`` is
+  flattened via ``numpy.asarray(...).sum()`` to handle both flat and
+  nested-list representations returned by different Newton view types.
+
+* Fixed ``randomize_rigid_body_material`` event term raising
+  ``AttributeError: 'ArticulationView' object has no attribute 'get_material_properties'``
+  when the Newton backend is used with an :class:`~isaaclab.assets.Articulation`.
+  Newton's ``ArticulationView`` does not yet expose material-property read/write
+  methods; the term now detects this at runtime, emits a one-time warning, and
+  skips the operation rather than crashing.
+
 4.5.24 (2026-03-25)
 ~~~~~~~~~~~~~~~~~~~
 

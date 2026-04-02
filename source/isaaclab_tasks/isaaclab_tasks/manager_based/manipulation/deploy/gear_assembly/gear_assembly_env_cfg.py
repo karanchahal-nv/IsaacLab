@@ -6,6 +6,7 @@
 import os
 from dataclasses import MISSING
 
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
 from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
@@ -27,6 +28,7 @@ from isaaclab.utils.noise import UniformNoiseCfg
 import isaaclab_tasks.manager_based.manipulation.deploy.mdp as mdp
 import isaaclab_tasks.manager_based.manipulation.deploy.mdp.terminations as gear_assembly_terminations
 from isaaclab_tasks.manager_based.manipulation.deploy.mdp.noise_models import ResetSampledConstantNoiseModelCfg
+from isaaclab_tasks.utils import PresetCfg
 
 # Get the directory where this configuration file is located
 CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -35,6 +37,52 @@ ASSETS_DIR = os.path.join(CONFIG_DIR, "assets")
 ##
 # Environment configuration
 ##
+
+
+@configclass
+class GearAssemblyPhysicsCfg(PresetCfg):
+    """Physics backend presets for gear assembly.
+
+    Gear insertion is contact-rich (gear teeth, shaft walls, gripper fingers),
+    so Newton solver limits are set conservatively.
+    """
+
+    default: NewtonCfg = NewtonCfg(
+        solver_cfg=MJWarpSolverCfg(
+            solver="newton",
+            integrator="implicitfast",
+            njmax=200,
+            nconmax=100,
+            impratio=10.0,
+            cone="elliptic",
+            iterations=100,
+            ls_iterations=50,
+            use_mujoco_contacts=True,
+        ),
+        num_substeps=2,
+        debug_mode=False,
+    )
+    physx: PhysxCfg = PhysxCfg(
+        gpu_collision_stack_size=2**30,
+        gpu_max_rigid_contact_count=2**23,
+        gpu_max_rigid_patch_count=2**23,
+    )
+
+    newton: NewtonCfg = NewtonCfg(
+        solver_cfg=MJWarpSolverCfg(
+            solver="newton",
+            integrator="implicitfast",
+            njmax=200,
+            nconmax=100,
+            impratio=10.0,
+            cone="elliptic",
+            iterations=100,
+            ls_iterations=50,
+            use_mujoco_contacts=True,
+        ),
+        num_substeps=2,
+        debug_mode=False,
+    )
 
 
 @configclass
@@ -58,7 +106,7 @@ class GearAssemblySceneCfg(InteractiveSceneCfg):
             usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Factory/gear_assets/factory_gear_base/factory_gear_base.usd",
             activate_contact_sensors=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                disable_gravity=False,
+                disable_gravity=True,
                 kinematic_enabled=True,
                 max_depenetration_velocity=5.0,
                 linear_damping=0.0,
@@ -329,11 +377,7 @@ class GearAssemblyEnvCfg(ManagerBasedRLEnvCfg):
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
     events: EventCfg = EventCfg()
-    sim: SimulationCfg = SimulationCfg(
-        physics=PhysxCfg(  # Important to prevent collisionStackSize buffer overflow in contact-rich environments.
-            gpu_collision_stack_size=2**30, gpu_max_rigid_contact_count=2**23, gpu_max_rigid_patch_count=2**23
-        ),
-    )
+    sim: SimulationCfg = SimulationCfg(physics=GearAssemblyPhysicsCfg())
 
     def __post_init__(self):
         """Post initialization."""
