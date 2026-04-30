@@ -148,9 +148,9 @@ class EventCfg:
         mode="reset",
         params={
             "pose_range": {
-                "x": [-0.1, 0.1],
-                "y": [-0.25, 0.25],
-                "z": [-0.1, 0.1],
+                "x": [-0.05, 0.05],
+                "y": [-0.10, 0.10],
+                "z": [-0.05, 0.05],
                 "roll": [-math.pi / 90, math.pi / 90],  # 2 degree
                 "pitch": [-math.pi / 90, math.pi / 90],  # 2 degree
                 "yaw": [-math.pi / 6, math.pi / 6],  # 30 degree
@@ -190,8 +190,14 @@ class FrankaGearAssemblyEnvCfg(GearAssemblyEnvCfg):
         self.end_effector_body_name = "panda_hand"  # End effector body name for IK
         self.num_arm_joints = 7  # Number of arm joints (Franka Panda has 7 DOF)
         # Rotation offset for grasp pose (quaternion [x, y, z, w])
-        # Start with identity — will need tuning based on Franka's EE frame orientation
-        self.grasp_rot_offset = [0.0, 0.0, 0.0, 1.0]
+        # Franka's panda_hand frame: z-axis points forward (along fingers), x-axis points down
+        # For downward grasp: rotate to align gripper fingers with gear (same as Rizon 4s)
+        self.grasp_rot_offset = [
+            -0.707,
+            0.707,
+            0.0,
+            0.0,
+        ]
         self.gripper_joint_setter_func = set_finger_joint_pos_panda  # Panda hand joint setter function
 
         # Gear orientation termination thresholds (in degrees)
@@ -250,6 +256,22 @@ class FrankaGearAssemblyEnvCfg(GearAssemblyEnvCfg):
             use_zero_offset=True,
         )
 
+        # ── Scene geometry adjustments ──────────────────────────────────────
+        # The base scene places gears at (-1.02, 0.21) — designed for UR10e (1.3m reach).
+        # Franka Panda reach is only 0.855m, so we move the gear assembly closer.
+        # Move gear base and all gears from (-1.02, 0.21) to (-0.50, 0.15)
+        from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
+        gear_pos = (-0.50, 0.15, -0.1)
+        gear_rot = (0.0, 0.0, 0.70711, 0.70711)
+        self.scene.factory_gear_base.init_state.pos = gear_pos
+        self.scene.factory_gear_base.init_state.rot = gear_rot
+        self.scene.factory_gear_small.init_state.pos = gear_pos
+        self.scene.factory_gear_small.init_state.rot = gear_rot
+        self.scene.factory_gear_medium.init_state.pos = gear_pos
+        self.scene.factory_gear_medium.init_state.rot = gear_rot
+        self.scene.factory_gear_large.init_state.pos = gear_pos
+        self.scene.factory_gear_large.init_state.rot = gear_rot
+
         # Switch robot to Franka Panda with high PD gains
         self.scene.robot = FRANKA_PANDA_HIGH_PD_CFG.replace(
             prim_path="{ENV_REGEX_NS}/Robot",
@@ -271,15 +293,16 @@ class FrankaGearAssemblyEnvCfg(GearAssemblyEnvCfg):
                 ),
                 collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
             ),
-            # Joint positions based on a reasonable home pose for the Franka Panda
+            # Joint positions: arm extended toward the gear workspace
+            # IK will refine this during set_robot_to_grasp_pose, but start close
             init_state=ArticulationCfg.InitialStateCfg(
                 joint_pos={
                     "panda_joint1": 0.0,
                     "panda_joint2": -0.569,
                     "panda_joint3": 0.0,
-                    "panda_joint4": -2.810,
+                    "panda_joint4": -2.310,
                     "panda_joint5": 0.0,
-                    "panda_joint6": 3.037,
+                    "panda_joint6": 2.0,
                     "panda_joint7": 0.741,
                     "panda_finger_joint.*": 0.04,
                 },
@@ -298,11 +321,13 @@ class FrankaGearAssemblyEnvCfg(GearAssemblyEnvCfg):
         )
 
         # Gear offsets and grasp positions for Franka Panda hand
-        # Z offset: Panda hand is shorter than Robotiq 2F-140 (-0.26) and Grav (-0.35)
+        # Z offset: distance from panda_hand frame to gear center when grasped
+        # Panda fingertip is ~0.1034m below panda_hand origin;
+        # gear should sit lower in the fingers (not at the base), so use -0.13
         self.gear_offsets_grasp = {
-            "gear_small": [0.0, self.gear_offsets["gear_small"][0], -0.11],
-            "gear_medium": [0.0, self.gear_offsets["gear_medium"][0], -0.11],
-            "gear_large": [0.0, self.gear_offsets["gear_large"][0], -0.11],
+            "gear_small": [0.0, -self.gear_offsets["gear_small"][0], -0.13],
+            "gear_medium": [0.0, -self.gear_offsets["gear_medium"][0], -0.126],  # 0.4cm higher than large
+            "gear_large": [0.0, -self.gear_offsets["gear_large"][0], -0.13],
         }
 
         # Grasp widths for Panda hand (in meters, per finger)
