@@ -326,23 +326,25 @@ class FrankaGearAssemblyEnvCfg(GearAssemblyEnvCfg):
         # gear should sit lower in the fingers (not at the base), so use -0.13
         self.gear_offsets_grasp = {
             "gear_small": [0.0, -self.gear_offsets["gear_small"][0], -0.13],
-            "gear_medium": [0.0, -self.gear_offsets["gear_medium"][0], -0.126],  # 0.4cm higher than large
+            "gear_medium": [0.0, -self.gear_offsets["gear_medium"][0], -0.135],  # 0.5cm lower than previous -0.126
             "gear_large": [0.0, -self.gear_offsets["gear_large"][0], -0.13],
         }
 
         # Grasp widths for Panda hand (in meters, per finger)
-        # Panda fingers: max open 0.04m per finger (0.08m total)
-        # Values are per-finger positions
+        # Panda fingers: 0.0 = fully closed, 0.04 = fully open (per finger)
+        # grasp_width = initial finger opening when gear is placed (just wide enough to fit)
+        # close_width = PD target to grip the gear tight (controller drives fingers to this)
+        # Small gear is tiny — must start nearly closed or gear slips through
         self.hand_grasp_width = {
-            "gear_small": 0.035,
-            "gear_medium": 0.030,
+            "gear_small": 0.010,   # barely open — gear must not fall through
+            "gear_medium": 0.020,
             "gear_large": 0.025,
         }
 
-        # Close widths for Panda hand (tighter grip, in meters per finger)
+        # Close widths: PD target for gripping (tighter than grasp_width)
         self.hand_close_width = {
-            "gear_small": 0.030,
-            "gear_medium": 0.025,
+            "gear_small": 0.005,   # near-closed for tiny gear
+            "gear_medium": 0.015,
             "gear_large": 0.020,
         }
 
